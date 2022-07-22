@@ -1,10 +1,14 @@
 
 import cv2
 from PIL import Image, ImageFilter
+import numpy as np
 from ouster import pcap
 from ouster import client
 import math
 import matplotlib.pyplot as plt
+from skimage.io import imread
+from skimage.morphology import remove_small_objects
+
 plt.ion()
 metadata_path = '../Data-5/capture-1.json'
 pcap_path = '../Data-5/capture-1.pcap'
@@ -48,13 +52,68 @@ while(1):
                     # ax1.scatter([], [])
                     temp = ax1.scatter(angles, ranges)
                     plt.savefig('plot.png')
-                    img = cv2.imread('./plot.png')
-                    image = Image.open(r"./plot.png")
-                    image = image.convert("L")
-                    image = image.filter(ImageFilter.FIND_EDGES)
-                    image.save(r"plot-detect.png")
-                    image_detect = cv2.imread("./plot-detect.png")
-                    cv2.imshow('Image', image_detect)
+                    # img = cv2.imread('./plot.png')
+                    # image = Image.open(r"./plot.png")
+                    # image = image.convert("L")
+                    # image = image.filter(ImageFilter.FIND_EDGES)
+                    # image.save(r"plot-detect.png")
+                    # image_detect = cv2.imread("./plot-detect.png")
+                    # cv2.imshow('Image', image_detect)
+
+                    rgb = imread('./plot.png')
+
+                    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+
+                    # threshold hue channel for purple tubes, value channel for blue tubes
+                    thresh_hue = cv2.threshold(
+                        hsv[..., 0], 127, 255, cv2.THRESH_BINARY)[1]
+                    thresh_val = cv2.threshold(
+                        hsv[..., 2], 200, 255, cv2.THRESH_BINARY)[1]
+                    thresh = thresh_hue | thresh_val
+                    thresh = cv2.morphologyEx(
+                        thresh, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+
+                    h_kernel = np.zeros((11, 11), dtype=np.uint8)
+                    h_kernel[5, :] = 1
+
+                    v_kernel = np.zeros((11, 11), dtype=np.uint8)
+                    v_kernel[:, 5] = 1
+
+                    h_tubes = cv2.morphologyEx(
+                        thresh, cv2.MORPH_OPEN, h_kernel, iterations=6)
+                    v_tubes = cv2.morphologyEx(
+                        thresh, cv2.MORPH_OPEN, v_kernel, iterations=7)
+
+                    h_contours = cv2.findContours(h_tubes, cv2.RETR_LIST,
+                                                  cv2.CHAIN_APPROX_SIMPLE)[0]
+                    h_lines = np.zeros(thresh.shape, np.uint8)
+
+                    for cnt in h_contours:
+                        x, y, w, h = cv2.boundingRect(cnt)
+                        y += int(np.floor(h / 2) - 4)
+                        cv2.rectangle(h_lines, (x, y), (x + w, y + 8), 255, -1)
+
+                    v_contours = cv2.findContours(v_tubes, cv2.RETR_LIST,
+                                                  cv2.CHAIN_APPROX_SIMPLE)[0]
+                    v_lines = np.zeros(thresh.shape, np.uint8)
+
+                    for cnt in v_contours:
+                        x, y, w, h = cv2.boundingRect(cnt)
+                        x += int(np.floor(w / 2) - 4)
+                        cv2.rectangle(v_lines, (x, y),
+                                      (x + 32, y + h), 255, -1)
+
+                    # combine horizontal and vertical lines
+                    all_lines = h_lines | v_lines
+
+                    xor = np.bool8(h_lines ^ v_lines)
+                    removed = xor ^ remove_small_objects(xor, 350)
+
+                    result = all_lines & ~removed * 255
+
+                    cv2.imwrite('result.png', result)
+                    image = cv2.imread("./result.png")
+                    cv2.imshow('Image', image)
                     plt.pause(0.2)
 
                     # Reset the angles and ranges array
