@@ -1,6 +1,7 @@
 
 import cv2
 from PIL import Image, ImageFilter
+from more_itertools import difference
 import numpy as np
 from ouster import pcap
 from ouster import client
@@ -32,8 +33,13 @@ ax1 = plt.subplot(111, polar=True)
 ax1.set_ylim([0, 3])
 
 source = pcap.Pcap(pcap_path, metadata)
+previous_frame = []
+difference_in_center = []
+previous_centers = []
 # source = client.Sensor('os1-991939001247.local')
 while(1):
+    centers = []
+
     scans = iter(client.Scans(source))
     try:
         scan = next(scans)
@@ -45,11 +51,13 @@ while(1):
                 length += 1
                 angle = math.atan2(j[1], j[0])
                 range = math.sqrt((j[0]*j[0]) + (j[1]*j[1]) + (j[2]*j[2]))
-                if range < 2.5:
+                if range < 2.5 and range != 0:
                     angles.append(angle)
                     ranges.append(range)
                 if length == 16384:
                     # ax1.scatter([], [])
+                    ax1.yaxis.grid(False)
+                    ax1.xaxis.grid(False)
                     temp = ax1.scatter(angles, ranges)
                     plt.savefig('plot.png')
                     # img = cv2.imread('./plot.png')
@@ -60,7 +68,7 @@ while(1):
                     # image_detect = cv2.imread("./plot-detect.png")
                     # cv2.imshow('Image', image_detect)
 
-                    rgb = imread('./plot.png')
+                    rgb = cv2.imread('./plot.png')
 
                     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
 
@@ -72,7 +80,6 @@ while(1):
                     thresh = thresh_hue | thresh_val
                     thresh = cv2.morphologyEx(
                         thresh, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-
                     h_kernel = np.zeros((11, 11), dtype=np.uint8)
                     h_kernel[5, :] = 1
 
@@ -113,6 +120,41 @@ while(1):
 
                     cv2.imwrite('result.png', result)
                     image = cv2.imread("./result.png")
+                    # image = cv2.cvtColor(thresh, cv2.COLOR_BGR2GRAY)
+                    prepared_frame = thresh
+                    if previous_frame == []:
+                        previous_frame = thresh
+                    diff_frame = cv2.absdiff(
+                        src1=previous_frame, src2=prepared_frame)
+                    previous_frame = prepared_frame
+                    kernel = np.ones((5, 5))
+                    diff_frame = cv2.dilate(diff_frame, kernel, 1)
+                    thresh_frame = cv2.threshold(
+                        src=diff_frame, thresh=20, maxval=255, type=cv2.THRESH_BINARY)[1]
+                    contours, _ = cv2.findContours(
+                        image=thresh_frame, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
+                    # cv2.drawContours(image=image, contours=contours, contourIdx=-1,
+                    #                  color=(0, 255, 0), thickness=2, lineType=cv2.LINE_AA)
+                    for i in contours:
+                        M = cv2.moments(i)
+                        x, y, w, h = cv2.boundingRect(i)
+                        if M['m00'] != 0:
+                            cx = int(M['m10']/M['m00'])
+                            cy = int(M['m01']/M['m00'])
+                            centers.append([cx, cy])
+                            length = len(centers)
+                            if previous_centers == []:
+                                previous_centers = centers
+                            for j in centers:
+                                distance = math.sqrt(abs(j[0] - previous_centers[centers.index(j)][0]) + abs(
+                                    j[1] - previous_centers[centers.index(j)][1]))
+                                print(distance / 0.2)
+                                cv2.putText(
+                                    image, 'Velocity : ' + str(math.floor(distance/0.2)) + "cm/s", (x, y), cv2.FONT_HERSHEY_COMPLEX, 0.6, (36, 255, 12), 1)
+                            previous_centers = centers
+                            cv2.drawContours(image, [i], -1, (0, 255, 0), 2)
+                            cv2.circle(image, (cx, cy), 7, (0, 0, 255), -1)
+
                     cv2.imshow('Image', image)
                     plt.pause(0.2)
 
